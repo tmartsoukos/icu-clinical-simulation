@@ -1,44 +1,77 @@
 /**
  * ICUWardView.tsx
  * -----------------------------------------------------------------------------
- * Κύρια οθόνη προσομοίωσης (Focus-Based / Direct Manipulation). Περιλαμβάνει:
- *  - Ρεαλιστικό φόντο ΜΕΘ (background image: /icu-bg.png) με XR vibe
- *  - 5 hotspots ως ημιδιαφανή κυανά "Pulse Rings" με ιατρικά εικονίδια,
- *    απόλυτα τοποθετημένα πάνω στην εικόνα (Recognition rather than Recall)
- *  - blur της σκηνής + Focus Modal κατά την αλληλεπίδραση
- *  - HUD (score / χρόνος / κατάσταση κόμβου) & live mini-vitals overlay
- *  - Timeout Progress Bar (30s) στον κόμβο n2
- *  - ακουστικός/οπτικός συναγερμός υποξαιμίας (κόκκινο pulse ring στο μόνιτορ)
+ * Κύρια οθόνη προσομοίωσης (Focus-Based / Direct Manipulation).
+ * Ευθυγραμμισμένο με τη ΝΕΑ εικόνα φόντου (/icu-bg.png — landscape 11:6) που
+ * περιλαμβάνει: δύο μεγάλες οθόνες (τερματικό σε βραχίονα κέντρο-αριστερά &
+ * μεγάλη κονσόλα τοίχου δεξιά) και αναπνευστήρα τέρμα αριστερά.
+ *
+ * Άμεσος Χειρισμός (Direct Manipulation):
+ *  - Οι ΟΘΟΝΕΣ (hs_monitor, hs_ehr) κάνουν render LIVE περιεχόμενο μέσα στο
+ *    bounding box τους (κινούμενα HTML5 Canvas waveforms / EHR mini-interface).
+ *  - Τα ΜΗ-οθόνες hotspots (hs_patient, hs_ventilator, hs_call) εμφανίζονται ως
+ *    ημιδιαφανή "Pulse Rings" με ιατρικά SVG icons που κάνουν ping όταν είναι
+ *    guided (Recognition rather than Recall).
+ *  - Με SpO₂ < 90% (Alarm) το πλαίσιο της οθόνης τοίχου κάνει έντονο κόκκινο
+ *    παλλόμενο flash (animate-pulse ring-4 ring-red-600).
  * -----------------------------------------------------------------------------
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useScenario } from '../context/ScenarioContext';
 import { useAlarmSound } from '../hooks/useAlarmSound';
-import type { DecisionOption } from '../types';
+import type { DecisionOption, Vitals } from '../types';
 import EHRModal from './EHRModal';
 import FocusModal from './FocusModal';
 import VitalsMonitor from './VitalsMonitor';
 import WaveformCanvas from './WaveformCanvas';
 
+/* ============================================================================
+ * CONFIGURABLE COORDINATES
+ * ----------------------------------------------------------------------------
+ * Bounding boxes (σε ΠΟΣΟΣΤΑ % πάνω στην εικόνα φόντου). Μικρο-ρύθμισε εδώ τις
+ * τιμές top/left/width/height αν χρειαστεί pixel-perfect ευθυγράμμιση.
+ * Αναφορά εικόνας: landscape 2816×1536 (11:6).
+ * ==========================================================================*/
+interface BBox {
+  top: string;
+  left: string;
+  width: string;
+  height: string;
+}
+
+const HOTSPOT_POSITIONS: Record<string, BBox> = {
+  // ΑΡΙΣΤΕΡΗ μεγάλη οθόνη τοίχου → LIVE EHR terminal.
+  hs_ehr: { top: '10.0%', left: '22.3%', width: '27.5%', height: '36.0%' },
+
+  // ΔΕΞΙΑ μεγάλη οθόνη τοίχου → LIVE μόνιτορ ζωτικών.
+  hs_monitor: { top: '10.0%', left: '50.1%', width: '27.5%', height: '36.0%' },
+
+  // Ιατρικός εξοπλισμός / αντλίες (αριστερός τοίχος) → Αναπνευστήρας.
+  hs_ventilator: { top: '46.0%', left: '12.5%', width: '4.5%', height: '8.5%' },
+
+  // Περιοχή κλίνης/κρεβατιού (κάτω-αριστερά) → Ασθενής.
+  hs_patient: { top: '60.0%', left: '11.0%', width: '35.0%', height: '38.0%' },
+
+  // Κουμπί κλήσης στη σιδηροτροχιά της κλίνης → μικρό pulse ring.
+  hs_call: { top: '52.0%', left: '44.0%', width: '3.0%', height: '5.5%' },
+};
+
 /* --------------------------- Medical icons (SVG) ------------------------- */
 
 const ICONS: Record<string, ReactNode> = {
   hs_monitor: (
-    // καρδιά + παλμός
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 12h3l2-5 3 9 2-6 1.5 2H21" />
     </svg>
   ),
   hs_patient: (
-    // κρεβάτι
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 8v10M3 13h18v5M21 18v-4a3 3 0 0 0-3-3h-7v3" />
       <circle cx="7" cy="10" r="1.6" />
     </svg>
   ),
   hs_ventilator: (
-    // πνεύμονες
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3v8" />
       <path d="M9 7c0 4-2 5-3.5 6.5C4 15 5 20 7.5 20S10 18 10 15v-4a2 2 0 0 0-1-2Z" />
@@ -46,30 +79,17 @@ const ICONS: Record<string, ReactNode> = {
     </svg>
   ),
   hs_ehr: (
-    // clipboard
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="6" y="4" width="12" height="17" rx="2" />
       <path d="M9 4h6v3H9zM9 12h6M9 16h4" />
     </svg>
   ),
   hs_call: (
-    // καμπάνα
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" />
       <path d="M10 21a2 2 0 0 0 4 0" />
     </svg>
   ),
-};
-
-/* --------------------------- Hotspot positions --------------------------- */
-/* Συντεταγμένες (%) πάνω στην εικόνα /icu-bg.png. Εύκολα ρυθμιζόμενες ώστε να
- * ταιριάζουν ακριβώς με τα στοιχεία της φωτογραφίας του θαλάμου. */
-const HOTSPOT_POS: Record<string, { top: string; left: string }> = {
-  hs_monitor: { top: '33%', left: '30%' },
-  hs_ventilator: { top: '61%', left: '18%' },
-  hs_patient: { top: '55%', left: '40%' },
-  hs_ehr: { top: '38%', left: '82%' },
-  hs_call: { top: '68%', left: '54%' },
 };
 
 /* ------------------------------ Timeout bar ------------------------------ */
@@ -124,76 +144,159 @@ function TimeoutBar({ seconds, nodeId, onExpire }: { seconds: number; nodeId: st
   );
 }
 
+/* ====================== Embedded LIVE wall monitor ======================= */
+
+function EmbeddedMonitor({ vitals, alarm, guided }: { vitals: Vitals; alarm: boolean; guided: boolean }) {
+  return (
+    <div
+      className={`scanlines absolute inset-0 flex flex-col overflow-hidden rounded-[6px] border bg-black/92 text-left transition-all ${
+        alarm
+          ? 'border-red-600 ring-4 ring-red-600 animate-pulse'
+          : guided
+            ? 'border-clinical-cyan/70 ring-2 ring-clinical-cyan/60 animate-pulse-glow'
+            : 'border-white/15'
+      } group-hover:brightness-125`}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-black to-clinical-panel/50 px-2 py-[3px]">
+        <span className="flex items-center gap-1.5">
+          <span className={`h-1.5 w-1.5 rounded-full ${alarm ? 'bg-red-500 animate-blink' : 'bg-clinical-green'}`} />
+          <span className="font-mono text-[8px] uppercase tracking-widest text-slate-400">ICU MONITOR · BED 1</span>
+        </span>
+        {alarm && (
+          <span className="font-mono text-[8px] font-bold uppercase tracking-widest text-red-400 animate-blink">▲ ALARM</span>
+        )}
+      </div>
+
+      {/* Waveforms + values */}
+      <div className="grid flex-1 grid-cols-[1fr_auto] gap-1 p-1.5">
+        <div className="flex min-w-0 flex-col justify-center gap-1">
+          <div className="rounded-sm border border-white/5 bg-black/70 px-1">
+            <WaveformCanvas kind="ecg" rate={vitals.hr} alarm={alarm} color="#34f5a0" height={34} />
+          </div>
+          <div className="rounded-sm border border-white/5 bg-black/70 px-1">
+            <WaveformCanvas kind="pleth" rate={vitals.hr} alarm={alarm} color="#22d3ee" height={26} />
+          </div>
+          <div className="rounded-sm border border-white/5 bg-black/70 px-1">
+            <WaveformCanvas kind="resp" rate={vitals.rr} alarm={false} color="#fbbf24" height={20} />
+          </div>
+        </div>
+
+        <div className="flex min-w-[54px] flex-col justify-center gap-0.5 rounded-sm border border-white/5 bg-black/50 px-1.5 py-1 font-mono leading-none">
+          <Readout label="HR" value={vitals.hr} color="text-clinical-green" />
+          <Readout
+            label="SpO₂"
+            value={vitals.spo2}
+            color={alarm ? 'text-red-500 animate-blink' : 'text-clinical-cyan'}
+          />
+          <Readout label="RR" value={vitals.rr} color="text-clinical-amber" />
+          <Readout label="NIBP" value={vitals.bp} color="text-slate-200" small />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Readout({
+  label,
+  value,
+  color,
+  small,
+}: {
+  label: string;
+  value: string | number;
+  color: string;
+  small?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-1">
+      <span className="text-[7px] uppercase tracking-wider text-slate-500">{label}</span>
+      <span className={`${small ? 'text-[10px]' : 'text-sm'} font-bold ${color}`}>{value}</span>
+    </div>
+  );
+}
+
+/* ======================= Embedded LIVE EHR terminal ===================== */
+
+function EmbeddedEHR({ guided }: { guided: boolean }) {
+  return (
+    <div
+      className={`scanlines absolute inset-0 flex flex-col overflow-hidden rounded-[6px] border bg-black/90 p-1.5 text-left transition-all ${
+        guided
+          ? 'border-clinical-cyan/70 ring-2 ring-clinical-cyan/60 animate-pulse-glow'
+          : 'border-white/15'
+      } group-hover:brightness-125`}
+    >
+      <div className="flex items-center justify-between border-b border-white/10 pb-1">
+        <span className="font-mono text-[8px] uppercase tracking-widest text-clinical-cyan">e-Health · EHR</span>
+        <span className="text-clinical-cyan/80">{ICONS.hs_ehr && <span className="block h-2.5 w-2.5">{ICONS.hs_ehr}</span>}</span>
+      </div>
+
+      {/* Faux trend sparkline (όπως το γράφημα της εικόνας) */}
+      <svg viewBox="0 0 100 26" preserveAspectRatio="none" className="my-1 h-6 w-full">
+        <polyline
+          points="0,18 12,14 22,16 34,8 46,12 58,5 70,11 82,7 100,10"
+          fill="none"
+          stroke="#34f5a0"
+          strokeWidth="1.5"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+
+      {/* Field placeholders */}
+      <div className="flex flex-1 flex-col justify-center gap-1">
+        {['Αξιολόγηση', 'Παρέμβαση', 'Επικοινωνία'].map((t) => (
+          <div key={t} className="flex items-center gap-1">
+            <span className="w-[42%] truncate text-[7px] text-slate-500">{t}</span>
+            <span className="h-1.5 flex-1 rounded-sm bg-white/10" />
+          </div>
+        ))}
+      </div>
+
+      <div
+        className={`mt-1 rounded-sm px-1 py-0.5 text-center font-mono text-[7px] uppercase tracking-widest ${
+          guided ? 'bg-clinical-cyan/20 text-clinical-cyan animate-blink' : 'bg-white/5 text-slate-400'
+        }`}
+      >
+        ▶ Έτοιμο για καταχώρηση
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------- Pulse Ring ------------------------------ */
 
-type Tone = 'cyan' | 'danger' | 'idle';
+type Tone = 'cyan' | 'idle';
 
-function PulseRing({
-  hotspotId,
-  label,
-  tone,
-  onClick,
-}: {
-  hotspotId: string;
-  label: string;
-  tone: Tone;
-  onClick: () => void;
-}) {
-  const pos = HOTSPOT_POS[hotspotId];
-  if (!pos) return null;
-
-  const palette: Record<Tone, { ring: string; ping: string; text: string; core: string; pingAnim: string }> = {
+function RingMarker({ hotspotId, label, tone }: { hotspotId: string; label: string; tone: Tone }) {
+  const palette: Record<Tone, { ring: string; ping: string; text: string; core: string }> = {
     cyan: {
       ring: 'border-clinical-cyan/80',
       ping: 'bg-clinical-cyan/40',
       text: 'text-clinical-cyan',
       core: 'bg-clinical-cyan/15',
-      pingAnim: 'animate-ping',
-    },
-    danger: {
-      ring: 'border-clinical-danger',
-      ping: 'bg-clinical-danger/50',
-      text: 'text-clinical-danger',
-      core: 'bg-clinical-danger/20',
-      pingAnim: 'animate-ping [animation-duration:0.9s]',
     },
     idle: {
-      ring: 'border-slate-400/40',
-      ping: 'bg-slate-400/10',
-      text: 'text-slate-300',
+      ring: 'border-slate-300/45',
+      ping: '',
+      text: 'text-slate-200',
       core: 'bg-white/5',
-      pingAnim: '',
     },
   };
   const c = palette[tone];
   const active = tone !== 'idle';
 
   return (
-    <button
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      style={{ top: pos.top, left: pos.left }}
-      className="group absolute z-20 -translate-x-1/2 -translate-y-1/2 outline-none"
-    >
-      <span className="relative flex h-16 w-16 items-center justify-center">
-        {/* Soft ping halo (μόνο όταν ενεργό) */}
-        {c.pingAnim && (
-          <span className={`absolute inline-flex h-full w-full rounded-full ${c.ping} ${c.pingAnim}`} />
-        )}
-        {/* Static glow ring */}
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <span className="relative flex h-14 w-14 items-center justify-center">
+        {active && <span className={`absolute inline-flex h-full w-full rounded-full ${c.ping} animate-ping`} />}
         <span
           className={`absolute inline-flex h-full w-full rounded-full border-2 ${c.ring} ${
-            tone === 'danger'
-              ? 'shadow-glow-danger'
-              : tone === 'cyan'
-                ? 'shadow-glow animate-pulse-glow'
-                : ''
-          } backdrop-blur-[2px] transition-all group-hover:scale-110`}
+            active ? 'shadow-glow animate-pulse-glow' : ''
+          } backdrop-blur-[2px] transition-transform group-hover:scale-110`}
         />
-        {/* Core disc + icon */}
         <span
-          className={`relative flex h-9 w-9 items-center justify-center rounded-full ${c.core} ${c.text} transition-transform group-hover:scale-110`}
+          className={`relative flex h-8 w-8 items-center justify-center rounded-full ${c.core} ${c.text} transition-transform group-hover:scale-110`}
         >
           <span className="h-5 w-5">{ICONS[hotspotId]}</span>
         </span>
@@ -201,16 +304,31 @@ function PulseRing({
 
       {/* Hover label chip */}
       <span
-        className={`pointer-events-none absolute left-1/2 top-[110%] -translate-x-1/2 whitespace-nowrap rounded-md border border-clinical-border bg-clinical-bg/90 px-2 py-0.5 text-[11px] font-medium ${c.text} opacity-0 shadow-lg backdrop-blur transition-opacity duration-200 group-hover:opacity-100`}
+        className={`absolute left-1/2 top-[78%] -translate-x-1/2 whitespace-nowrap rounded-md border border-clinical-border bg-clinical-bg/90 px-2 py-0.5 text-[11px] font-medium ${c.text} opacity-0 shadow-lg backdrop-blur transition-opacity duration-200 group-hover:opacity-100`}
       >
         {label}
       </span>
 
-      {/* Guidance dot */}
-      {active && tone !== 'danger' && (
-        <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-clinical-cyan shadow-glow" />
+      {active && (
+        <span className="absolute right-[34%] top-[28%] h-2.5 w-2.5 rounded-full bg-clinical-cyan shadow-glow" />
       )}
-    </button>
+    </div>
+  );
+}
+
+/* --------------------------- Screen label chip --------------------------- */
+
+function ScreenTag({ text, tone }: { text: string; tone: 'cyan' | 'danger' }) {
+  return (
+    <span
+      className={`pointer-events-none absolute -top-2 left-2 z-10 rounded border px-1.5 py-[1px] font-mono text-[8px] uppercase tracking-widest backdrop-blur ${
+        tone === 'danger'
+          ? 'border-red-600/60 bg-red-950/70 text-red-300'
+          : 'border-clinical-cyan/40 bg-clinical-bg/80 text-clinical-cyan'
+      }`}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -330,40 +448,6 @@ function HotspotModalContent({ hotspotId }: { hotspotId: string }) {
   }
 }
 
-/* --------------------------- Live mini-vitals HUD ------------------------ */
-
-function MiniVitals() {
-  const { state } = useScenario();
-  const alarm = state.monitorAlert;
-  return (
-    <div
-      className={`absolute bottom-3 left-3 z-20 w-52 rounded-xl border bg-black/55 p-2.5 backdrop-blur-md ${
-        alarm ? 'border-clinical-danger animate-pulse-glow-danger' : 'border-clinical-cyan/30'
-      }`}
-    >
-      <div className="mb-1 flex items-center justify-between">
-        <span className="font-mono text-[9px] uppercase tracking-widest text-slate-400">Live · Bed 1</span>
-        <span className={`h-1.5 w-1.5 rounded-full ${alarm ? 'bg-clinical-danger animate-blink' : 'bg-clinical-green'}`} />
-      </div>
-      <WaveformCanvas kind="ecg" rate={state.vitals.hr} alarm={alarm} color="#34f5a0" height={34} />
-      <div className="mt-1 flex items-center justify-between font-mono">
-        <span className="text-sm font-bold text-clinical-green text-glow-green">
-          {state.vitals.hr}
-          <span className="ml-0.5 text-[9px] text-slate-500">HR</span>
-        </span>
-        <span
-          className={`text-sm font-bold ${
-            alarm ? 'text-clinical-danger text-glow-danger animate-blink' : 'text-clinical-cyan text-glow-cyan'
-          }`}
-        >
-          {state.vitals.spo2}%
-          <span className="ml-0.5 text-[9px] text-slate-500">SpO₂</span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /* ------------------------------ Main view -------------------------------- */
 
 const ACCENT_BY_HOTSPOT: Record<string, 'cyan' | 'green' | 'amber' | 'danger'> = {
@@ -383,7 +467,7 @@ export default function ICUWardView() {
   // Ενεργά hotspots βάσει state (αρχικό ui.active_hotspots).
   const activeSet = new Set(scenario.initial_state.ui.active_hotspots);
 
-  // Hotspots που πρέπει να λάμπουν (καθοδήγηση τρέχοντος κόμβου).
+  // Hotspots που πρέπει να καθοδηγούν την προσοχή του χρήστη.
   const guidedHotspots = new Set<string>();
   if (currentNode?.type === 'decision') {
     for (const o of currentNode.options ?? []) guidedHotspots.add(o.target_hotspot);
@@ -395,10 +479,10 @@ export default function ICUWardView() {
   const hotspotLabel = (id: string) => scenario.hotspots.find((h) => h.id === id)?.label ?? id;
   const elapsedSec = state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0;
 
-  const toneFor = (id: string): Tone => {
-    if (id === 'hs_monitor' && state.monitorAlert) return 'danger';
-    if (guidedHotspots.has(id)) return 'cyan';
-    return 'idle';
+  const renderHotspotContent = (id: string, guided: boolean): ReactNode => {
+    if (id === 'hs_monitor') return <EmbeddedMonitor vitals={state.vitals} alarm={state.monitorAlert} guided={guided} />;
+    if (id === 'hs_ehr') return <EmbeddedEHR guided={guided} />;
+    return <RingMarker hotspotId={id} label={hotspotLabel(id)} tone={guided ? 'cyan' : 'idle'} />;
   };
 
   return (
@@ -435,42 +519,54 @@ export default function ICUWardView() {
 
       {/* ----------------------------- Scene ----------------------------- */}
       <div
-        className={`relative mx-auto w-full max-w-3xl flex-1 transition-all duration-300 ${
+        className={`relative mx-auto w-full max-w-5xl flex-1 transition-all duration-300 ${
           activeHotspot ? 'pointer-events-none scale-[0.99] blur-md' : ''
         }`}
       >
         <div
-          className="scanlines relative aspect-square w-full overflow-hidden rounded-2xl border border-clinical-border shadow-2xl"
+          className="relative aspect-[11/6] w-full overflow-hidden rounded-2xl border border-clinical-border shadow-2xl"
           style={{
             backgroundColor: '#0a1120',
             backgroundImage:
-              "linear-gradient(180deg, rgba(7,11,20,0.20) 0%, rgba(7,11,20,0.10) 40%, rgba(7,11,20,0.55) 100%), url('/icu-bg.png')",
+              "linear-gradient(180deg, rgba(7,11,20,0.18) 0%, rgba(7,11,20,0.05) 45%, rgba(7,11,20,0.45) 100%), url('/icu-bg.png')",
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}
         >
           {/* Ambient vignette για βάθος / XR vibe */}
-          <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_140px_40px_rgba(0,0,0,0.55)]" />
+          <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_120px_36px_rgba(0,0,0,0.5)]" />
 
-          {/* Pulse-ring hotspots */}
+          {/* Hotspots (screens → live render, others → pulse rings) */}
           {scenario.hotspots.map((h) => {
             if (!activeSet.has(h.id)) return null; // ανενεργό βάσει state ⇒ κρυμμένο
+            const pos = HOTSPOT_POSITIONS[h.id];
+            if (!pos) return null;
+            const guided = guidedHotspots.has(h.id);
+            const isScreen = h.id === 'hs_monitor' || h.id === 'hs_ehr';
+            const monitorAlarm = h.id === 'hs_monitor' && state.monitorAlert;
+
             return (
-              <PulseRing
+              <button
                 key={h.id}
-                hotspotId={h.id}
-                label={h.label}
-                tone={toneFor(h.id)}
                 onClick={() => openHotspot(h.id)}
-              />
+                aria-label={h.label}
+                title={h.label}
+                style={{ top: pos.top, left: pos.left, width: pos.width, height: pos.height }}
+                className="group absolute z-20 cursor-pointer outline-none transition-transform duration-200 hover:z-30 hover:scale-[1.03]"
+              >
+                {isScreen && (
+                  <ScreenTag
+                    text={h.id === 'hs_monitor' ? 'MONITOR' : 'EHR'}
+                    tone={monitorAlarm ? 'danger' : 'cyan'}
+                  />
+                )}
+                {renderHotspotContent(h.id, guided)}
+              </button>
             );
           })}
 
-          {/* Live mini-vitals overlay */}
-          <MiniVitals />
-
           {/* Caption */}
-          <div className="absolute bottom-3 right-3 z-20 rounded-full border border-clinical-border bg-black/50 px-3 py-1 text-[10px] uppercase tracking-widest text-clinical-muted">
+          <div className="pointer-events-none absolute bottom-2 right-3 z-10 rounded-full border border-clinical-border bg-black/45 px-3 py-1 text-[10px] uppercase tracking-widest text-clinical-muted">
             Θάλαμος ΜΕΘ · Κλίνη 1
           </div>
         </div>
@@ -542,7 +638,7 @@ function NodeBriefing({ onContinue }: { onContinue: () => void }) {
 
           {isDecision && (
             <p className="mt-2 text-xs text-clinical-cyan">
-              ➔ Επίλεξε ενέργεια ανοίγοντας ένα από τα <span className="font-semibold">λαμπερά pulse rings</span>.
+              ➔ Επίλεξε ενέργεια κάνοντας κλικ σε ένα από τα <span className="font-semibold">φωτισμένα στοιχεία</span> της σκηνής.
             </p>
           )}
           {isGate && (
