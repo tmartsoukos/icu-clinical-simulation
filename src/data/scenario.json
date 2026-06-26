@@ -33,6 +33,13 @@
       "monitor_alert": true
     }
   },
+  "flag_labels": {
+    "assessment_complete": "Άμεση Κλινική Αξιολόγηση",
+    "oxygen_adjusted": "Ρύθμιση Οξυγόνου (FiO₂)",
+    "documentation_1_complete": "Τεκμηρίωση Αξιολόγησης & Παρέμβασης",
+    "escalation_complete": "Κλιμάκωση (Κλήση Ιατρού)",
+    "documentation_2_complete": "Καταγραφή Επικοινωνίας"
+  },
   "hotspots": [
     { "id": "hs_monitor", "label": "Μόνιτορ Ζωτικών (Monitor)" },
     { "id": "hs_patient", "label": "Ασθενής/Κλίνη (Patient)" },

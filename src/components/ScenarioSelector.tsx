@@ -10,18 +10,20 @@
 import { useRef, useState } from 'react';
 import { useScenario } from '../context/ScenarioContext';
 import type { Scenario } from '../types';
+import HelpModal from './HelpModal';
 
-export default function ScenarioSelector({ builtIn }: { builtIn: Scenario }) {
+export default function ScenarioSelector({ builtIns }: { builtIns: Scenario[] }) {
   const { state, loadScenario, start, pushToast } = useScenario();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [selectedId, setSelectedId] = useState(state.scenario?.scenario_meta.id ?? builtIn.scenario_meta.id);
+  const [selectedId, setSelectedId] = useState(state.scenario?.scenario_meta.id ?? builtIns[0].scenario_meta.id);
+  const [showHelp, setShowHelp] = useState(false);
 
-  // Λίστα σεναρίων: το ενσωματωμένο + (προαιρετικά) το φορτωμένο custom.
-  const scenarios: Scenario[] = [builtIn];
-  if (state.scenario && state.scenario.scenario_meta.id !== builtIn.scenario_meta.id) {
+  // Λίστα σεναρίων: τα ενσωματωμένα + (προαιρετικά) το φορτωμένο custom JSON.
+  const scenarios: Scenario[] = [...builtIns];
+  if (state.scenario && !builtIns.some((b) => b.scenario_meta.id === state.scenario!.scenario_meta.id)) {
     scenarios.push(state.scenario);
   }
-  const active = scenarios.find((s) => s.scenario_meta.id === selectedId) ?? builtIn;
+  const active = scenarios.find((s) => s.scenario_meta.id === selectedId) ?? builtIns[0];
   const meta = active.scenario_meta;
 
   const handleFile = (file: File) => {
@@ -70,6 +72,15 @@ export default function ScenarioSelector({ builtIn }: { builtIn: Scenario }) {
           <p className="mt-2 text-sm text-clinical-muted">
             Διαδραστικό σενάριο κλινικής λήψης αποφάσεων · Εργασία Αλληλεπίδρασης Ανθρώπου–Υπολογιστή
           </p>
+          <button
+            onClick={() => setShowHelp(true)}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-clinical-border bg-clinical-panel/60 px-4 py-2 text-sm font-medium text-slate-300 transition-all hover:border-clinical-cyan/50 hover:text-clinical-cyan"
+          >
+            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-clinical-cyan/50 text-xs text-clinical-cyan">
+              ?
+            </span>
+            Οδηγίες & Βοήθεια
+          </button>
         </div>
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-[280px_1fr]">
@@ -181,6 +192,8 @@ export default function ScenarioSelector({ builtIn }: { builtIn: Scenario }) {
           React · Vite · TypeScript · Tailwind CSS — HCI / UX ιατρικών εφαρμογών
         </footer>
       </div>
+
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

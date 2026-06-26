@@ -1,0 +1,192 @@
+{
+  "schema_version": "1.0",
+  "scenario_meta": {
+    "id": "icu_scenario_sepsis_v2",
+    "title": "ΜΕΘ: Αιμοδυναμική Αστάθεια & Σηπτικό Σοκ",
+    "description": "Διαχείριση ασθενούς με σοβαρή λοίμωξη, υψηλό πυρετό, ταχυκαρδία και υπόταση, με ανάγκη για άμεση χορήγηση υγρών και τεκμηρίωση.",
+    "estimated_duration_minutes": 6,
+    "difficulty": "Advanced",
+    "learning_goals": [
+      "Αξιολόγηση σηπτικής εικόνας (υπόταση, πυρετός)",
+      "Άμεση αιμοδυναμική υποστήριξη (χορήγηση status υγρών)",
+      "Διαχείριση documentation gates υπό κλινική πίεση",
+      "Αντιμετώπιση δευτερογενούς υποξαιμίας λόγω καθυστέρησης"
+    ]
+  },
+  "initial_state": {
+    "time_elapsed": 0,
+    "current_score": 100,
+    "fluids_administered": false,
+    "documentation_1_complete": false,
+    "blood_cultures_taken": false,
+    "vitals": {
+      "hr": 130,
+      "spo2": 95,
+      "rr": 26,
+      "bp": "85/45",
+      "temp": 39.2
+    },
+    "ui": {
+      "active_hotspots": ["hs_monitor", "hs_patient", "hs_ventilator", "hs_ehr", "hs_call"],
+      "monitor_alert": false
+    }
+  },
+  "flag_labels": {
+    "fluids_administered": "Χορήγηση Υγρών (IV Fluids)",
+    "documentation_1_complete": "Καταγραφή Σηπτικού Περιστατικού",
+    "blood_cultures_taken": "Λήψη Αιμοκαλλιεργειών"
+  },
+  "hotspots": [
+    { "id": "hs_monitor", "label": "Μόνιτορ Ζωτικών (Monitor)" },
+    { "id": "hs_patient", "label": "Ασθενής/Κλίνη (Patient)" },
+    { "id": "hs_ventilator", "label": "Αναπνευστήρας (Ventilator)" },
+    { "id": "hs_ehr", "label": "Τερματικό EHR (e-Health)" },
+    { "id": "hs_call", "label": "Κουμπί Κλήσης (Call Button)" }
+  ],
+  "ehr_config": {
+    "forms": {
+      "assessment_form": {
+        "title": "Κλινική Αξιολόγηση",
+        "fields": ["observation", "skin_color", "consciousness"]
+      },
+      "intervention_form": {
+        "title": "Παρεμβάσεις / Ρυθμίσεις",
+        "fields": ["device", "fiO2_setting", "flow_rate"]
+      },
+      "communication_log": {
+        "title": "Ημερολόγιο Επικοινωνίας",
+        "fields": ["recipient", "reason", "outcome"]
+      }
+    }
+  },
+  "rules": {
+    "global_rules": [
+      {
+        "id": "rule_hypoxia_alarm",
+        "condition": { "vitals.spo2": { "lt": 90 } },
+        "effects": [
+          { "type": "ui_visual", "target": "hs_monitor", "state": "blinking_red" },
+          { "type": "ui_toast", "style": "danger", "message": "ΚΡΙΣΙΜΟΣ ΣΥΝΑΓΕΡΜΟΣ: SpO2 < 90%! Ο ασθενής αποκορεώνεται!" }
+        ]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "n1_start",
+      "type": "message",
+      "text": "Νέο περιστατικό: Ο ασθενής εμφανίζει εικόνα συστηματικής φλεγμονώδους απόκρισης. Ο πυρετός είναι 39.2°C, η πίεση έχει πέσει στο 85/45 και η καρδιά χτυπάει γρήγορα (130 bpm).",
+      "next_node_id": "n2_sepsis_initial"
+    },
+    {
+      "id": "n2_sepsis_initial",
+      "type": "decision",
+      "text": "Η μέση αρτηριακή πίεση είναι πολύ χαμηλή. Ποια είναι η άμεση ενέργειά σας;",
+      "options": [
+        {
+          "id": "opt_fluid_resus",
+          "label": "Έναρξη ταχείας έγχυσης κρυσταλλοειδών υγρών (IV Fluids)",
+          "target_hotspot": "hs_patient",
+          "effects": {
+            "score_delta": 20,
+            "state_update": { "flags.fluids_administered": true },
+            "vitals_update": { "bp": "105/65", "hr": 115 },
+            "toast": "Ξεκίνησε η χορήγηση υγρών. Η πίεση ανατάσσεται στο 105/65 και ο καρδιακός ρυθμός ομαλοποιείται ελαφρώς."
+          },
+          "next_node_id": "n4_gate_sepsis_docs"
+        },
+        {
+          "id": "opt_call_early",
+          "label": "Άμεση κλήση του γιατρού πριν από οποιαδήποτε παρέμβαση",
+          "target_hotspot": "hs_call",
+          "effects": {
+            "score_delta": 5,
+            "vitals_update": { "bp": "80/40", "hr": 135 },
+            "toast": "Ο γιατρός ειδοποιήθηκε αλλά ο ασθενής παραμένει χωρίς υγρά. Η πίεση πέφτει κι άλλο (80/40)."
+          },
+          "next_node_id": "n4_gate_sepsis_docs"
+        }
+      ],
+      "timeout": {
+        "seconds": 30,
+        "on_timeout_effects": {
+          "vitals_update": { "spo2": 86, "hr": 140, "bp": "75/35" },
+          "score_delta": -20,
+          "toast": "Σοβαρή καθυστέρηση! Ο ασθενής μπαίνει σε βαθύ σοκ. Το SpO2 πέφτει στο 86% και η πίεση στο 75/35!"
+        },
+        "next_node_id": "n3_hypoxia_rescue"
+      }
+    },
+    {
+      "id": "n3_hypoxia_rescue",
+      "type": "decision",
+      "text": "Λόγω της καθυστέρησης, ενεργοποιήθηκε ο συναγερμός υποξαιμίας (SpO2: 86%). Πρέπει να παρέμβετε άμεσα στον αναπνευστήρα.",
+      "options": [
+        {
+          "id": "opt_rescue_o2",
+          "label": "Αύξηση FiO2 στο 100% και χορήγηση υγρών",
+          "target_hotspot": "hs_ventilator",
+          "effects": {
+            "score_delta": 15,
+            "vitals_update": { "spo2": 93, "bp": "95/55", "hr": 125 },
+            "toast": "Το οξυγόνο αυξήθηκε. Το SpO2 ανακάμπτει στο 93% και ο συναγερμός σταματά."
+          },
+          "next_node_id": "n4_gate_sepsis_docs"
+        }
+      ]
+    },
+    {
+      "id": "n4_gate_sepsis_docs",
+      "type": "gate",
+      "text": "GATE: Υποχρεωτική Καταγραφή Σηπτικού Περιστατικού.",
+      "description": "Πρέπει να καταγράψετε την κλινική εικόνα (observation) στην Κλινική Αξιολόγηση του EHR για να συνεχίσετε.",
+      "gate_requirements": {
+        "target_hotspot": "hs_ehr",
+        "required_forms": [
+          { "form_id": "assessment_form", "fields": ["observation", "skin_color"] }
+        ],
+        "feedback_blocked": "Το EHR μπλοκάρει τη ροή. Καταγράψτε την αξιολόγηση (observation) και το χρώμα δέρματος (skin_color).",
+        "feedback_success": "Η καταγραφή έγινε με επιτυχία. Η πύλη ξεκλειδώνει.",
+        "effects_on_pass": {
+          "state_update": { "flags.documentation_1_complete": true },
+          "score_delta": 10
+        }
+      },
+      "next_node_id": "n5_cultures"
+    },
+    {
+      "id": "n5_cultures",
+      "type": "decision",
+      "text": "Για την οριστική αντιμετώπιση της σήψης, πρέπει να ληφθούν αιμοκαλλιέργειες πριν τη χορήγηση αντιβιοτικών.",
+      "options": [
+        {
+          "id": "opt_take_cultures",
+          "label": "Λήψη δειγμάτων αίματος για καλλιέργεια",
+          "target_hotspot": "hs_patient",
+          "effects": {
+            "score_delta": 15,
+            "state_update": { "flags.blood_cultures_taken": true },
+            "toast": "Τα δείγματα ελήφθησαν και στάλθηκαν στο εργαστήριο."
+          },
+          "next_node_id": "n6_end"
+        }
+      ]
+    },
+    {
+      "id": "n6_end",
+      "type": "end",
+      "text": "Το σενάριο της αιμοδυναμικής αστάθειας ολοκληρώθηκε με επιτυχία. Ο ασθενής σταθεροποιήθηκε.",
+      "debrief_config": {
+        "show_score": true,
+        "show_decision_path": true,
+        "highlight_missed_docs": true,
+        "export_log": true
+      },
+      "logging": {
+        "enabled": true,
+        "log_events": ["NODE_ENTER", "HOTSPOT_INTERACTION", "OPTION_SELECTED", "EHR_SUBMIT", "VITALS_CHANGE"],
+        "export_format": "JSON"
+      }
+    }
+  ]
+}

@@ -23,6 +23,7 @@ import { useAlarmSound } from '../hooks/useAlarmSound';
 import type { DecisionOption, Vitals } from '../types';
 import EHRModal from './EHRModal';
 import FocusModal from './FocusModal';
+import HelpModal from './HelpModal';
 import VitalsMonitor from './VitalsMonitor';
 import WaveformCanvas from './WaveformCanvas';
 
@@ -462,7 +463,27 @@ export default function ICUWardView() {
   const { state, currentNode, openHotspot, closeHotspot, continueMessage, fireTimeout, reset } = useScenario();
   const scenario = state.scenario!;
 
-  useAlarmSound(state.monitorAlert, true);
+  const [soundOn, setSoundOn] = useState(() => {
+    try {
+      return localStorage.getItem('icu_sound') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const [showHelp, setShowHelp] = useState(false);
+
+  const toggleSound = () =>
+    setSoundOn((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('icu_sound', next ? 'on' : 'off');
+      } catch {
+        /* ignore storage errors */
+      }
+      return next;
+    });
+
+  useAlarmSound(state.monitorAlert, soundOn);
 
   // Ενεργά hotspots βάσει state (αρχικό ui.active_hotspots).
   const activeSet = new Set(scenario.initial_state.ui.active_hotspots);
@@ -504,8 +525,28 @@ export default function ICUWardView() {
           <Stat label="Χρόνος" value={`${elapsedSec}s`} accent="cyan" />
           <Stat label="Events" value={String(state.log.length)} accent="cyan" />
           <button
+            onClick={toggleSound}
+            title={soundOn ? 'Σίγαση συναγερμού' : 'Ενεργοποίηση ήχου'}
+            aria-label={soundOn ? 'Σίγαση συναγερμού' : 'Ενεργοποίηση ήχου'}
+            className={`ml-1 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              soundOn
+                ? 'border-clinical-border text-slate-300 hover:border-clinical-cyan/50 hover:text-clinical-cyan'
+                : 'border-clinical-amber/50 text-clinical-amber'
+            }`}
+          >
+            {soundOn ? '🔊' : '🔇'}
+          </button>
+          <button
+            onClick={() => setShowHelp(true)}
+            title="Οδηγίες & Βοήθεια"
+            aria-label="Οδηγίες & Βοήθεια"
+            className="rounded-lg border border-clinical-border px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-clinical-cyan/50 hover:text-clinical-cyan"
+          >
+            ? Βοήθεια
+          </button>
+          <button
             onClick={reset}
-            className="ml-1 rounded-lg border border-clinical-border px-3 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:border-clinical-danger/50 hover:text-clinical-danger"
+            className="rounded-lg border border-clinical-border px-3 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:border-clinical-danger/50 hover:text-clinical-danger"
           >
             ⟲ Reset
           </button>
@@ -591,6 +632,9 @@ export default function ICUWardView() {
           <HotspotModalContent hotspotId={activeHotspot} />
         </FocusModal>
       )}
+
+      {/* On-line Help */}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

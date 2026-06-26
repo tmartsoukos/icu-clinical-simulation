@@ -181,6 +181,11 @@ export interface Scenario {
   ehr_config: EhrConfig;
   rules: Rules;
   nodes: ScenarioNode[];
+  /**
+   * Προαιρετικές αναγνώσιμες ετικέτες για τα flags κατάστασης — χρησιμοποιούνται
+   * από την οθόνη Debrief (data-driven checklist τεκμηρίωσης/πρωτοκόλλου).
+   */
+  flag_labels?: Record<string, string>;
 }
 
 /* -------------------------------- Toasts --------------------------------- */

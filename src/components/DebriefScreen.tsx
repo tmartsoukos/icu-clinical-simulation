@@ -69,21 +69,38 @@ export default function DebriefScreen() {
     [state.log],
   );
 
-  // Έλεγχος ελλιπούς τεκμηρίωσης βάσει flags.
-  const docFlags = [
-    { key: 'documentation_1_complete', label: 'Τεκμηρίωση Αξιολόγησης & Παρέμβασης' },
-    { key: 'documentation_2_complete', label: 'Καταγραφή Επικοινωνίας' },
-    { key: 'escalation_complete', label: 'Κλιμάκωση (Κλήση Ιατρού)' },
-    { key: 'oxygen_adjusted', label: 'Ρύθμιση Οξυγόνου (FiO₂)' },
-    { key: 'assessment_complete', label: 'Άμεση Κλινική Αξιολόγηση' },
-  ];
+  // Έλεγχος ελλιπούς τεκμηρίωσης/πρωτοκόλλου — DATA-DRIVEN από τα flags του
+  // εκάστοτε σεναρίου (με ετικέτες από το προαιρετικό scenario.flag_labels).
+  const humanize = (key: string) =>
+    key
+      .replace(/_/g, ' ')
+      .replace(/\bcomplete\b/i, '')
+      .trim()
+      .replace(/^\w/, (c) => c.toUpperCase());
+  const flagLabels = scenario.flag_labels ?? {};
+  const docFlags = Object.keys(state.flags).map((key) => ({
+    key,
+    label: flagLabels[key] ?? humanize(key),
+  }));
 
-  const maxScore = scenario.initial_state.current_score + 55; // άθροισμα θετικών deltas
+  // Μέγιστο εφικτό score: αρχικό + καλύτερη θετική επιλογή ανά decision + gates.
+  const maxScore = useMemo(() => {
+    let max = scenario.initial_state.current_score;
+    for (const node of scenario.nodes) {
+      if (node.type === 'decision' && node.options) {
+        const best = Math.max(0, ...node.options.map((o) => o.effects.score_delta ?? 0));
+        max += best;
+      } else if (node.type === 'gate' && node.gate_requirements) {
+        max += Math.max(0, node.gate_requirements.effects_on_pass.score_delta ?? 0);
+      }
+    }
+    return max;
+  }, [scenario]);
   const scorePct = Math.max(0, Math.min(100, Math.round((state.score / maxScore) * 100)));
   const grade =
-    state.score >= 130 ? 'Άριστα' : state.score >= 110 ? 'Πολύ Καλά' : state.score >= 90 ? 'Καλά' : 'Χρειάζεται Βελτίωση';
+    scorePct >= 90 ? 'Άριστα' : scorePct >= 75 ? 'Πολύ Καλά' : scorePct >= 60 ? 'Καλά' : 'Χρειάζεται Βελτίωση';
   const gradeColor =
-    state.score >= 110 ? 'text-clinical-green' : state.score >= 90 ? 'text-clinical-cyan' : 'text-clinical-danger';
+    scorePct >= 75 ? 'text-clinical-green' : scorePct >= 60 ? 'text-clinical-cyan' : 'text-clinical-danger';
 
   const exportJSON = () =>
     downloadFile(
@@ -128,7 +145,7 @@ export default function DebriefScreen() {
                   cy="60"
                   r="52"
                   fill="none"
-                  stroke={state.score >= 110 ? '#34f5a0' : state.score >= 90 ? '#22d3ee' : '#ff3b4e'}
+                  stroke={scorePct >= 75 ? '#34f5a0' : scorePct >= 60 ? '#22d3ee' : '#ff3b4e'}
                   strokeWidth="10"
                   strokeLinecap="round"
                   strokeDasharray={`${(scorePct / 100) * 327} 327`}
