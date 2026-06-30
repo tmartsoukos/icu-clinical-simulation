@@ -4,7 +4,7 @@
     "id": "icu_scenario_sepsis_v2",
     "title": "ΜΕΘ: Αιμοδυναμική Αστάθεια & Σηπτικό Σοκ",
     "description": "Διαχείριση ασθενούς με σοβαρή λοίμωξη, υψηλό πυρετό, ταχυκαρδία και υπόταση, με ανάγκη για άμεση χορήγηση υγρών και τεκμηρίωση.",
-    "estimated_duration_minutes": 6,
+    "estimated_duration_minutes": 8,
     "difficulty": "Advanced",
     "learning_goals": [
       "Αξιολόγηση σηπτικής εικόνας (υπόταση, πυρετός)",
@@ -19,6 +19,8 @@
     "fluids_administered": false,
     "documentation_1_complete": false,
     "blood_cultures_taken": false,
+    "escalation_complete": false,
+    "communication_logged": false,
     "vitals": {
       "hr": 130,
       "spo2": 95,
@@ -34,7 +36,9 @@
   "flag_labels": {
     "fluids_administered": "Χορήγηση Υγρών (IV Fluids)",
     "documentation_1_complete": "Καταγραφή Σηπτικού Περιστατικού",
-    "blood_cultures_taken": "Λήψη Αιμοκαλλιεργειών"
+    "blood_cultures_taken": "Λήψη Αιμοκαλλιεργειών",
+    "escalation_complete": "Κλιμάκωση για Αντιβιοτικά",
+    "communication_logged": "Καταγραφή Επικοινωνίας (Gate)"
   },
   "hotspots": [
     { "id": "hs_monitor", "label": "Μόνιτορ Ζωτικών (Monitor)" },
@@ -168,14 +172,63 @@
             "state_update": { "flags.blood_cultures_taken": true },
             "toast": "Τα δείγματα ελήφθησαν και στάλθηκαν στο εργαστήριο."
           },
-          "next_node_id": "n6_end"
+          "next_node_id": "n6_escalation_decision"
         }
       ]
     },
     {
-      "id": "n6_end",
+      "id": "n6_escalation_decision",
+      "type": "decision",
+      "text": "Ο ασθενής σταθεροποιείται, αλλά η σηπτική εικόνα επιμένει (πυρετός 39.2°C). Απαιτείται κλιμάκωση για άμεση έναρξη αντιβιοτικών ευρέος φάσματος.",
+      "options": [
+        {
+          "id": "opt_escalate_abx",
+          "label": "Κλήση εφημερεύοντος εντατικολόγου για συνταγογράφηση αντιβιοτικών",
+          "target_hotspot": "hs_call",
+          "effects": {
+            "score_delta": 15,
+            "state_update": { "flags.escalation_complete": true },
+            "vitals_update": { "temp": 38.4, "hr": 110 },
+            "toast": "Ο εντατικολόγος ειδοποιήθηκε και συνταγογράφησε αντιβιοτικά. Ξεκινά η αιτιολογική θεραπεία."
+          },
+          "next_node_id": "n7_gate_communication"
+        },
+        {
+          "id": "opt_wait_cultures",
+          "label": "Αναμονή των αποτελεσμάτων καλλιέργειας πριν την κλήση",
+          "target_hotspot": "hs_monitor",
+          "effects": {
+            "score_delta": -10,
+            "vitals_update": { "temp": 39.5, "hr": 128 },
+            "toast": "Η καθυστέρηση έναρξης αντιβιοτικών επιδεινώνει τη σήψη. Ο πυρετός και η ταχυκαρδία ανεβαίνουν."
+          },
+          "next_node_id": "n7_gate_communication"
+        }
+      ]
+    },
+    {
+      "id": "n7_gate_communication",
+      "type": "gate",
+      "text": "GATE: Καταγραφή Κλιμάκωσης & Επικοινωνίας.",
+      "description": "Καταγράψτε την επικοινωνία με τον ιατρό στο Ημερολόγιο Επικοινωνίας του EHR για να ολοκληρωθεί το περιστατικό.",
+      "gate_requirements": {
+        "target_hotspot": "hs_ehr",
+        "required_forms": [
+          { "form_id": "communication_log", "fields": ["recipient", "outcome"] }
+        ],
+        "feedback_blocked": "Εκκρεμεί η καταγραφή της κλήσης στο EHR. Συμπληρώστε παραλήπτη (recipient) και έκβαση (outcome).",
+        "feedback_success": "Η επικοινωνία καταγράφηκε. Το περιστατικό είναι πλήρως τεκμηριωμένο.",
+        "effects_on_pass": {
+          "state_update": { "flags.communication_logged": true },
+          "score_delta": 10
+        }
+      },
+      "next_node_id": "n8_end"
+    },
+    {
+      "id": "n8_end",
       "type": "end",
-      "text": "Το σενάριο της αιμοδυναμικής αστάθειας ολοκληρώθηκε με επιτυχία. Ο ασθενής σταθεροποιήθηκε.",
+      "text": "Το σενάριο της αιμοδυναμικής αστάθειας ολοκληρώθηκε με επιτυχία. Ο ασθενής σταθεροποιήθηκε και η αιτιολογική θεραπεία ξεκίνησε.",
       "debrief_config": {
         "show_score": true,
         "show_decision_path": true,
